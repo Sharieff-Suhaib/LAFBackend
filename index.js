@@ -90,12 +90,29 @@ app.post("/login", async (req, res) => {
             return res.status(400).json({ error: "Invalid email or password" });
         }
         const token = jwt.sign({ email_id: user.email_id, user_id: user.user_id }, process.env.JWT_SECRET , { expiresIn: "1h" });
+        //console.log("Generated Token:", token);
         res.json({token});
     } catch (error) {
         res.json({ error: error.message });
     }
 });
-
+app.get("/lost-and-found/items", async (req, res) => {
+    try {
+        const posts = await prisma.item.findMany();
+        const postsWithPublicUrls = posts.map((post) => {
+            const imageKey = post.image.split("/").pop(); 
+            //console.log("Image Key:", imageKey);
+            const publicUrl = `${process.env.IMAGE_ENDPOINT}/${imageKey}`; 
+            return {
+              ...post,
+              image: publicUrl, 
+            };
+        });
+        res.json(postsWithPublicUrls);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 app.post("/lost-and-found/post",
     (req, res, next) => {
         console.log("Request Headers:", req.headers);
@@ -124,7 +141,7 @@ app.post("/lost-and-found/post",
             image: image_url,
             contact_number,
             reason,
-            special_marks,
+            special_marks : JSON.parse(special_marks),
             user_id,
           },
         });
