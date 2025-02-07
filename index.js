@@ -120,6 +120,7 @@ app.post("/lost-and-found/post",
         next();
       },upload.single('image'),authenticateToken, async (req, res) => {
       try {
+        console.log("Request Body:", req.body);
         console.log("Request Body:", req.body.data);
         console.log("Uploaded File:", req.file); 
         const { item_name, user_name,description,location,contact_number,reason,special_marks } = req.body;
@@ -141,7 +142,7 @@ app.post("/lost-and-found/post",
             image: image_url,
             contact_number,
             reason,
-            special_marks : JSON.parse(special_marks),
+            special_marks,
             user_id,
           },
         });
