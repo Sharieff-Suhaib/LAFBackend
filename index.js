@@ -120,7 +120,6 @@ app.post("/lost-and-found/post",
         next();
       },upload.single('image'),authenticateToken, async (req, res) => {
       try {
-        console.log("Request Body:", req.body);
         console.log("Request Body:", req.body.data);
         console.log("Uploaded File:", req.file); 
         const { item_name, user_name,description,location,contact_number,reason,special_marks } = req.body;
@@ -142,7 +141,7 @@ app.post("/lost-and-found/post",
             image: image_url,
             contact_number,
             reason,
-            special_marks,
+            special_marks : JSON.parse(special_marks),
             user_id,
           },
         });
@@ -153,6 +152,52 @@ app.post("/lost-and-found/post",
       }
     }
   );
+
+  app.delete("/delete-file", authenticateToken, async (req, res) => {
+    try {
+        const { fileKey } = req.body;
+        if (!fileKey) {
+            return res.status(400).json({ error: "File key is required" });
+        }
+        const params = {
+            Bucket: "lost-and-found",
+            Key: fileKey,
+        };
+        await r2.deleteObject(params).promise();
+
+        await prisma.Item_Received.create({
+            data:
+                {
+                    item_id:item_id,
+                    timestamp:Date.now(),
+                }
+        })
+
+        await prisma.item.delete(
+            {
+                where:{item_id:item_id}
+            }
+        );
+
+        res.json({ message: "File deleted successfully" });
+    } catch (error) {
+        console.error("Error deleting file:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+async function Tablefn() {
+    await prisma.$executeRaw`
+        CREATE TABLE IF NOT EXISTS Item_Received (
+            item_id SERIAL NOT NULL,
+            timestamp Date,
+        );
+    `;
+    console.log("New table created successfully");
+}
+
+// Tablefn();
+
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
 });
