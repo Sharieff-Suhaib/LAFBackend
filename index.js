@@ -12,6 +12,7 @@ dotenv.config();
 const multer = require("multer");
 const multerS3 = require("multer-s3");
 const r2 = require("./r2Config");
+const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const cors = require("cors");
 app.use(cors());
 const upload = multer({
@@ -101,7 +102,6 @@ app.get("/lost-and-found/items", async (req, res) => {
         const posts = await prisma.item.findMany();
         const postsWithPublicUrls = posts.map((post) => {
             const imageKey = post.image.split("/").pop(); 
-            //console.log("Image Key:", imageKey);
             const publicUrl = `${process.env.IMAGE_ENDPOINT}/${imageKey}`; 
             return {
               ...post,
@@ -120,7 +120,6 @@ app.post("/lost-and-found/post",
         next();
       },upload.single('image'),authenticateToken, async (req, res) => {
       try {
-        console.log("Request Body:", req.body);
         console.log("Request Body:", req.body.data);
         console.log("Uploaded File:", req.file); 
         const { item_name, user_name,description,location,contact_number,reason,special_marks } = req.body;
@@ -142,7 +141,7 @@ app.post("/lost-and-found/post",
             image: image_url,
             contact_number,
             reason,
-            special_marks,
+            special_marks : JSON.parse(special_marks),
             user_id,
           },
         });
@@ -153,6 +152,56 @@ app.post("/lost-and-found/post",
       }
     }
   );
+
+  app.delete("/lost-and-found/delete", authenticateToken, async (req, res) => {
+    try {
+      const { item_id } = req.body;
+  
+      if (!item_id) {
+        return res.status(400).json({ error: "item_id is required" });
+      }
+  
+      const item = await prisma.item.findUnique({
+        where: { item_id },
+      });
+      console.log(item);
+      if (!item) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+      if (item.image) {
+        const urlParts = item.image.split('/');
+        const fileKey = urlParts[urlParts.length - 1].split('?')[0];
+  
+        const params = {
+          Bucket: "lost-and-found",
+          Key: fileKey,
+        };
+        console.log("Deleting image:", params);
+        const deleteCommand = new DeleteObjectCommand(params);
+        const response = await r2.send(deleteCommand);
+        console.log("Delete response:", response);
+      }
+  
+      await prisma.ItemReceived.create({
+        data: {
+          item_id: item_id,
+          item_name: item.item_name,
+          user_id : item.user_id,
+          received_at: new Date(),
+        },
+      });
+      await prisma.item.delete({
+        where: { item_id },
+      });
+  
+      res.json({ message: "Item and its image successfully deleted and recorded." });
+    } catch (error) {
+      console.error("Error deleting item:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
 });
