@@ -42,3 +42,10 @@ model Item {
   user          User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 }
 
+model ItemReceived {
+  id        Int      @id @default(autoincrement())
+  item_id   Int
+  user_id       Int
+  item_name     String
+  received_at DateTime @default(now())
+}
