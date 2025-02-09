@@ -141,7 +141,7 @@ app.post("/lost-and-found/post",
             image: image_url,
             contact_number,
             reason,
-            special_marks : JSON.parse(special_marks),
+            special_marks,
             user_id,
           },
         });
