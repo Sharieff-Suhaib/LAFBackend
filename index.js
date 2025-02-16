@@ -13,6 +13,9 @@ const multer = require("multer");
 const multerS3 = require("multer-s3");
 const r2 = require("./r2Config");
 const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const nodemailer = require("nodemailer");
+const otpGenerator = require("otp-generator");
+const redis = require("redis");
 const cors = require("cors");
 app.use(cors());
 const upload = multer({
@@ -92,10 +95,31 @@ app.post("/login", async (req, res) => {
         }
         const token = jwt.sign({ email_id: user.email_id, user_id: user.user_id }, process.env.JWT_SECRET , { expiresIn: "1h" });
         //console.log("Generated Token:", token);
-        res.json({token});
+        res.json({token,user_id : user.user_id});
     } catch (error) {
         res.json({ error: error.message });
     }
+});
+app.patch("/profile", authenticateToken, async (req, res) => {
+  try{
+    const { user_id } = req.user;
+    console.log("User ID:", user_id);
+    const { user_name, email_id, phone_number } = req.body;
+    console.log("Request Body:", req.body);
+    const user = await prisma.user.update({
+        where: { user_id },
+        data: {
+            user_name,
+            email_id,
+            phone_number,
+        },
+    });
+    console.log("Updated User:", user);
+    res.json(user);
+  } catch (error) {
+    res.json({ error: error.message });
+
+  }
 });
 app.get("/lost-and-found/items", async (req, res) => {
     try {
@@ -113,6 +137,30 @@ app.get("/lost-and-found/items", async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+app.get("/lost-and-found/items/:userId", authenticateToken, async (req, res) => {
+  try {
+      const user_id = Number(req.params.userId);
+      console.log("User ID:", user_id);
+
+      const posts = await prisma.item.findMany({
+          where: { user_id },
+      });
+
+      if (!posts || posts.length === 0) {
+        return res.json([]);
+      }
+
+      const postsWithPublicUrls = posts.map((post) => ({
+          ...post,
+          image: post.image ? `${process.env.IMAGE_ENDPOINT}/${post.image.split("/").pop()}` : "",
+      }));
+
+      res.json(postsWithPublicUrls);
+  } catch (error) {
+      res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/lost-and-found/post",
     (req, res, next) => {
         console.log("Request Headers:", req.headers);
@@ -153,9 +201,9 @@ app.post("/lost-and-found/post",
     }
   );
 
-  app.delete("/lost-and-found/delete", authenticateToken, async (req, res) => {
+  app.delete("/lost-and-found/delete/:itemId", authenticateToken, async (req, res) => {
     try {
-      const { item_id } = req.body;
+      const item_id = parseInt(req.params.itemId);
   
       if (!item_id) {
         return res.status(400).json({ error: "item_id is required" });
@@ -182,7 +230,7 @@ app.post("/lost-and-found/post",
         console.log("Delete response:", response);
       }
   
-      await prisma.ItemReceived.create({
+      await prisma.itemReceived.create({
         data: {
           item_id: item_id,
           item_name: item.item_name,
@@ -200,8 +248,129 @@ app.post("/lost-and-found/post",
       res.status(500).json({ error: error.message });
     }
   });
-  
+app.get("/profile", authenticateToken, async (req, res) => {
+  try{
+    if (!req.user || !req.user.user_id) {
+      return res.status(401).json({ error: "Unauthorized access" });
+    }
+    const { user_id } = req.user;
+    console.log("User ID:", user_id);
+    const user = await prisma.user.findUnique({
+        where: { user_id },
+    });
+    console.log("User:", user);
+    res.json(user);
+  } catch (error) {
+    res.json({ error: error.message });
 
+  } 
+});
+
+const redisConnection = redis.createClient({ url: "redis://localhost:6379" });
+
+redisConnection.on("error", (err) => console.error("Redis Connection Error:", err));
+redisConnection.connect().then(() => console.log("Connected to Redis"));
+
+
+const transporter = nodemailer.createTransport({
+    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 465, 
+    secure: true, 
+    auth: {
+        user: process.env.ADMIN_EMAIL,
+        pass: process.env.ADMIN_PASS,
+    },
+});
+
+
+transporter.verify((error, success) => {
+    if (error) {
+        console.error("Nodemailer error:", error);
+    } else {
+        console.log("Nodemailer is Connected");
+    }
+});
+
+
+app.post("/send", async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+    }
+
+    const otp = otpGenerator.generate(6, {
+        digits: true,
+        lowerCaseAlphabets: false,
+        upperCaseAlphabets: false,
+        specialChars: false,
+    });
+
+    
+    await redisConnection.setEx(email, 120, otp);
+
+    const mailOptions = {
+        from: process.env.ADMIN_EMAIL,
+        to: email,
+        subject: "OTP Verification",
+        text: `Your OTP code is ${otp}. It is valid for 2 minutes.`,
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log(`OTP Sent to ${email}: ${otp}`);
+        res.status(200).json({ message: "OTP sent successfully" });
+    } catch (err) {
+        console.error("Email Sending Error:", err);
+        res.status(500).json({ error: "Failed to send OTP", details: err.message });
+    }
+});
+
+app.post("/verify", async (req, res) => {
+    const { otp, email } = req.body;
+
+    if (!email || !otp) {
+        return res.status(400).json({ error: "OTP and Email are required" });
+    }
+
+    const redisOTP = await redisConnection.get(email);
+
+    if (!redisOTP) {
+        return res.status(410).json({ error: "OTP Expired. Please request a new one." });
+    }
+
+    if (redisOTP === otp) {
+        await redisConnection.del(email);
+        console.log(`OTP Verified for ${email}`);
+        return res.status(200).json({ message: "OTP verified successfully" });
+    }
+
+    return res.status(400).json({ error: "Invalid OTP" });
+});
+app.post("/change-password", authenticateToken, async (req, res) => {
+  try {
+      const { new_password, conf_password } = req.body;
+      console.log("Request Body:", req.body);
+      if (!new_password || !conf_password) {
+        return res.status(400).json({ error: "Both password fields are required" });
+    }
+
+    if (new_password !== conf_password) {
+        return res.status(400).json({ error: "Passwords do not match" });
+    }
+
+      const hashedPassword = await bcrypt.hash(new_password, 10);
+      await prisma.user.update({
+          where: { user_id: req.user.user_id },
+          data: { password: hashedPassword },
+      });
+
+      res.status(200).json({ message: "Password changed successfully" });
+  } catch (error) {
+      res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
 });
