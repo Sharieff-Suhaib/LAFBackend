@@ -7,8 +7,6 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
 dotenv.config();
-// const bodyParser = require("body-parser");
-// app.use(bodyParser.urlencoded({ extended: true }));
 const multer = require("multer");
 const multerS3 = require("multer-s3");
 const r2 = require("./r2Config");
@@ -26,7 +24,6 @@ const upload = multer({
         contentType: multerS3.AUTO_CONTENT_TYPE,
         key: function (req, file, cb) {
             const uniqueName = `${Date.now()}-${file.originalname}`;
-            console.log("Uploading file:", uniqueName);
             cb(null, uniqueName);
         },
     }),
@@ -39,9 +36,6 @@ app.use("/login", express.json());
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers["authorization"];
     const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : authHeader;
-
-    console.log("Received Token:", token);
-    
     if (!token) {
         return res.status(403).json({ error: "Access denied. No token provided." });
     }
@@ -51,7 +45,6 @@ const authenticateToken = (req, res, next) => {
             return res.status(403).json({ error: "Invalid or expired token." });
         }
         req.user = user;
-        console.log("User authenticated successfully.");
         next();
     });
 };
@@ -94,7 +87,6 @@ app.post("/login", async (req, res) => {
             return res.status(400).json({ error: "Invalid email or password" });
         }
         const token = jwt.sign({ email_id: user.email_id, user_id: user.user_id }, process.env.JWT_SECRET , { expiresIn: "1h" });
-        //console.log("Generated Token:", token);
         res.json({token,user_id : user.user_id});
     } catch (error) {
       console.error("Login error:", error);
@@ -104,9 +96,7 @@ app.post("/login", async (req, res) => {
 app.patch("/profile", authenticateToken, async (req, res) => {
   try{
     const { user_id } = req.user;
-    console.log("User ID:", user_id);
     const { user_name, email_id, phone_number } = req.body;
-    console.log("Request Body:", req.body);
     const user = await prisma.user.update({
         where: { user_id },
         data: {
@@ -115,7 +105,6 @@ app.patch("/profile", authenticateToken, async (req, res) => {
             phone_number,
         },
     });
-    console.log("Updated User:", user);
     res.json(user);
   } catch (error) {
     res.json({ error: error.message });
@@ -141,7 +130,6 @@ app.get("/lost-and-found/items", async (req, res) => {
 app.get("/lost-and-found/items/:userId", authenticateToken, async (req, res) => {
   try {
       const user_id = Number(req.params.userId);
-      console.log("User ID:", user_id);
 
       const posts = await prisma.item.findMany({
           where: { user_id },
@@ -164,17 +152,12 @@ app.get("/lost-and-found/items/:userId", authenticateToken, async (req, res) => 
 
 app.post("/lost-and-found/post",
     (req, res, next) => {
-        console.log("Request Headers:", req.headers);
-        console.log("Request Body:", req.body); 
         next();
       },upload.single('image'),authenticateToken, async (req, res) => {
-      try {
-        console.log("Request Body:", req.body.data);
-        console.log("Uploaded File:", req.file); 
+      try { 
         const { item_name, user_name,description,location,contact_number,reason,special_marks } = req.body;
         
         const user_id = req.user.user_id;
-        console.log("User ID:", user_id);
         const image_url = req.file?.location;
   
         if (!image_url) {
@@ -213,7 +196,6 @@ app.post("/lost-and-found/post",
       const item = await prisma.item.findUnique({
         where: { item_id },
       });
-      console.log(item);
       if (!item) {
         return res.status(404).json({ error: "Item not found" });
       }
@@ -225,10 +207,8 @@ app.post("/lost-and-found/post",
           Bucket: "lost-and-found",
           Key: fileKey,
         };
-        console.log("Deleting image:", params);
         const deleteCommand = new DeleteObjectCommand(params);
         const response = await r2.send(deleteCommand);
-        console.log("Delete response:", response);
       }
   
       await prisma.itemReceived.create({
@@ -255,11 +235,9 @@ app.get("/profile", authenticateToken, async (req, res) => {
       return res.status(401).json({ error: "Unauthorized access" });
     }
     const { user_id } = req.user;
-    console.log("User ID:", user_id);
     const user = await prisma.user.findUnique({
         where: { user_id },
     });
-    console.log("User:", user);
     res.json(user);
   } catch (error) {
     res.json({ error: error.message });
@@ -320,7 +298,6 @@ app.post("/send", async (req, res) => {
 
     try {
         await transporter.sendMail(mailOptions);
-        console.log(`OTP Sent to ${email}: ${otp}`);
         res.status(200).json({ message: "OTP sent successfully" });
     } catch (err) {
         console.error("Email Sending Error:", err);
@@ -343,7 +320,6 @@ app.post("/verify", async (req, res) => {
 
     if (redisOTP === otp) {
         await redisConnection.del(email);
-        console.log(`OTP Verified for ${email}`);
         return res.status(200).json({ message: "OTP verified successfully" });
     }
 
@@ -352,7 +328,6 @@ app.post("/verify", async (req, res) => {
 app.post("/change-password", authenticateToken, async (req, res) => {
   try {
       const { new_password, conf_password } = req.body;
-      console.log("Request Body:", req.body);
       if (!new_password || !conf_password) {
         return res.status(400).json({ error: "Both password fields are required" });
     }
