@@ -97,7 +97,8 @@ app.post("/login", async (req, res) => {
         //console.log("Generated Token:", token);
         res.json({token,user_id : user.user_id});
     } catch (error) {
-        res.json({ error: error.message });
+      console.error("Login error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
 });
 app.patch("/profile", authenticateToken, async (req, res) => {
@@ -369,6 +370,13 @@ app.post("/change-password", authenticateToken, async (req, res) => {
       res.status(200).json({ message: "Password changed successfully" });
   } catch (error) {
       res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+app.get("/logout", (req, res) => {
+  try {
+    res.status(200).json({ message: "Logout successful" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to logout" });
   }
 });
 app.listen(port, () => {
