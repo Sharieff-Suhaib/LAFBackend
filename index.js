@@ -245,23 +245,102 @@ app.get("/profile", authenticateToken, async (req, res) => {
   } 
 });
 
-const redisConnection = redis.createClient({ url: "redis://localhost:6379" });
+// const redisConnection = redis.createClient({ url: "redis://localhost:6379" });
 
-redisConnection.on("error", (err) => console.error("Redis Connection Error:", err));
-redisConnection.connect().then(() => console.log("Connected to Redis"));
+// redisConnection.on("error", (err) => console.error("Redis Connection Error:", err));
+// redisConnection.connect().then(() => console.log("Connected to Redis"));
 
+
+// const transporter = nodemailer.createTransport({
+//     service: "gmail",
+//     host: "smtp.gmail.com",
+//     port: 465, 
+//     secure: true, 
+//     auth: {
+//         user: process.env.ADMIN_EMAIL,
+//         pass: process.env.ADMIN_PASS,
+//     },
+// });
+
+
+// transporter.verify((error, success) => {
+//     if (error) {
+//         console.error("Nodemailer error:", error);
+//     } else {
+//         console.log("Nodemailer is Connected");
+//     }
+// });
+
+
+// app.post("/send", async (req, res) => {
+//     const { email } = req.body;
+
+//     if (!email) {
+//         return res.status(400).json({ error: "Email is required" });
+//     }
+
+//     const otp = otpGenerator.generate(6, {
+//         digits: true,
+//         lowerCaseAlphabets: false,
+//         upperCaseAlphabets: false,
+//         specialChars: false,
+//     });
+
+    
+//     await redisConnection.setEx(email, 120, otp);
+
+//     const mailOptions = {
+//         from: process.env.ADMIN_EMAIL,
+//         to: email,
+//         subject: "OTP Verification",
+//         text: `Your OTP code is ${otp}. It is valid for 2 minutes.`,
+//     };
+
+//     try {
+//         await transporter.sendMail(mailOptions);
+//         res.status(200).json({ message: "OTP sent successfully" });
+//     } catch (err) {
+//         console.error("Email Sending Error:", err);
+//         res.status(500).json({ error: "Failed to send OTP", details: err.message });
+//     }
+// });
+
+// app.post("/verify", async (req, res) => {
+//     const { otp, email } = req.body;
+
+//     if (!email || !otp) {
+//         return res.status(400).json({ error: "OTP and Email are required" });
+//     }
+
+//     const redisOTP = await redisConnection.get(email);
+
+//     if (!redisOTP) {
+//         return res.status(410).json({ error: "OTP Expired. Please request a new one." });
+//     }
+
+//     if (redisOTP === otp) {
+//         await redisConnection.del(email);
+//         return res.status(200).json({ message: "OTP verified successfully" });
+//     }
+
+//     return res.status(400).json({ error: "Invalid OTP" });
+// });
+const otpStorage = {}; // In-memory OTP storage
+
+function generateOTP() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 const transporter = nodemailer.createTransport({
     service: "gmail",
     host: "smtp.gmail.com",
-    port: 465, 
-    secure: true, 
+    port: 465,
+    secure: true,
     auth: {
         user: process.env.ADMIN_EMAIL,
         pass: process.env.ADMIN_PASS,
     },
 });
-
 
 transporter.verify((error, success) => {
     if (error) {
@@ -271,7 +350,7 @@ transporter.verify((error, success) => {
     }
 });
 
-
+// Send OTP API
 app.post("/send", async (req, res) => {
     const { email } = req.body;
 
@@ -279,15 +358,10 @@ app.post("/send", async (req, res) => {
         return res.status(400).json({ error: "Email is required" });
     }
 
-    const otp = otpGenerator.generate(6, {
-        digits: true,
-        lowerCaseAlphabets: false,
-        upperCaseAlphabets: false,
-        specialChars: false,
-    });
+    const otp = generateOTP();
 
-    
-    await redisConnection.setEx(email, 120, otp);
+    // Store OTP in memory with a timestamp
+    otpStorage[email] = { otp, expiresAt: Date.now() + 2 * 60 * 1000 }; // 2 minutes
 
     const mailOptions = {
         from: process.env.ADMIN_EMAIL,
@@ -305,21 +379,27 @@ app.post("/send", async (req, res) => {
     }
 });
 
-app.post("/verify", async (req, res) => {
+// Verify OTP API
+app.post("/verify", (req, res) => {
     const { otp, email } = req.body;
 
     if (!email || !otp) {
         return res.status(400).json({ error: "OTP and Email are required" });
     }
 
-    const redisOTP = await redisConnection.get(email);
+    const storedOTP = otpStorage[email];
 
-    if (!redisOTP) {
+    if (!storedOTP) {
         return res.status(410).json({ error: "OTP Expired. Please request a new one." });
     }
 
-    if (redisOTP === otp) {
-        await redisConnection.del(email);
+    if (Date.now() > storedOTP.expiresAt) {
+        delete otpStorage[email]; // Remove expired OTP
+        return res.status(410).json({ error: "OTP Expired. Please request a new one." });
+    }
+
+    if (storedOTP.otp === otp) {
+        delete otpStorage[email]; // Remove OTP after successful verification
         return res.status(200).json({ message: "OTP verified successfully" });
     }
 
